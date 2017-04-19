@@ -8,7 +8,7 @@ import assume         from 'assume';
 import path           from 'path';
 import {schema, credentials}       from './helpers';
 
-describe('Data Container - Tests for authentication with SAS from auth.taskcluster.net', () => {
+describe.only('Data Container - Tests for authentication with SAS from auth.taskcluster.net', () => {
   var callCount = 0;
   var returnExpiredSAS = false;
   // Create test api
@@ -162,6 +162,7 @@ describe('Data Container - Tests for authentication with SAS from auth.taskclust
 
   it('should create a data block blob', async () => {
     callCount = 0;
+    console.dir(dataContainer);
     await dataContainer.createDataBlockBlob({
       name: 'blobTest',
     }, {

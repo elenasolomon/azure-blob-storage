@@ -7,10 +7,13 @@ import {rethrowDebug}   from './utils';
 import _debug           from 'debug';
 const debug = _debug('azure-blob-storage:account');
 import {DataBlockBlob, AppendDataBlob} from './datablob';
+import {SchemaIntegrityCheckError} from './customerrors';
 
 /**
  * This class represents an Azure Blob Storage container which stores objects in JSON format.
  * All the objects will be validated against the schema that is provided at the creation time of the container.
+ *
+ * TODO - document how to create an instance of DataContainer!!
  */
 class DataContainer {
 
@@ -29,6 +32,8 @@ class DataContainer {
    *   accessLevel:       'read-write',           // The access level of the container: read-only/read-write (optional)
    *   authBaseUrl:       '...',                  // baseUrl for auth (optional)
    *   schema:            '...',                  // JSON schema object
+   *   schemaVersion:     1,                      // JSON schema version. (optional)
+   *                                              // The default value is 1.
    *
    *   // Max number of update blob request retries
    *   updateRetries:              10,
@@ -67,6 +72,10 @@ class DataContainer {
     assert(typeof options.container === 'string',   'options.container is not a string');
     assert(options.schema,                          'options.schema must be given');
     assert(typeof options.schema === 'object',      'options.schema is not an object');
+
+    if (options.schemaVersion) {
+      assert(typeof options.schemaVersion === 'number', 'options.schemaVersion is not a number');
+    }
 
     // create an Azure Blob Storage client
     let blobService;
@@ -108,7 +117,12 @@ class DataContainer {
 
     this.blobService = blobService;
     this.name        = options.container;
+    this._validateFunctionMap = {};
+
     this.schema      = options.schema;
+    this.schemaVersion = options.schemaVersion? options.schemaVersion : 1;
+    this.schema.id = this._getSchemaId(this.schemaVersion);
+
     this.validator   = Ajv({
       useDefaults: true,
       format: 'full',
@@ -116,9 +130,8 @@ class DataContainer {
       allErrors: true,
     });
     // get the schema validation function
-    this.schema.id = this._getSchemaId();
     // the compile method also checks if the JSON schema is a valid one
-    this.validate = this.validator.compile(this.schema);
+    // this.validate = this.validator.compile(this.schema);
 
     this.updateRetries = options.updateRetries || 10;
     this.updateDelayFactor = options.updateDelayFactor || 100;
@@ -126,9 +139,73 @@ class DataContainer {
     this.updateMaxDelay = options.updateMaxDelay || 30 * 1000;
   }
 
-  _getSchemaId() {
+  _getSchemaId(schemaVersion) {
     return `http://${this.blobService.options.accountId}.blob.core.windows.net/` +
-      `${this.name}/${constants.JSON_SCHEMA_NAME}`;
+      `${this.name}/.schema.v${schemaVersion}.json`;
+  }
+
+  _getSchemaName(schemaVersion) {
+    return `.schema.v${schemaVersion}`;
+  }
+
+  /*
+   *  Integrity check and saves the schema in blob
+   */
+  async _saveSchema() {
+    let storedSchema;
+    let schemaName = this._getSchemaName(this.schemaVersion);
+    try {
+      let schemaBlob = await this.blobService.getBlob(this.name, schemaName);
+      storedSchema = schemaBlob.content;
+    } catch (error) {
+      if (error.code === 'BlobNotFound') {
+        await this.blobService.putBlob(this.name, schemaName, {type: 'BlockBlob'}, JSON.stringify(this.schema));
+        this._validateFunctionMap[this.schemaVersion] = this.validator.compile(this.schema);
+        return;
+      }
+      rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
+    }
+
+    // integrity check
+    if (storedSchema !== JSON.stringify(this.schema)) {
+      throw new SchemaIntegrityCheckError('The stored schema is not the same with the schema defined.');
+    }
+    this._validateFunctionMap[this.schemaVersion] = this.validator.compile(this.schema);
+  }
+
+  /**
+   * Method that validates the content
+   *
+   * @param content - JSON content
+   * @param schemaVersion - the schema version (optional) ??
+   */
+  async validate(content, schemaVersion = this.schemaVersion) {
+    let ajvValidate = this._validateFunctionMap[schemaVersion];
+    // if the validate function is not available, this means that the schema is not yet loaded
+    if (!ajvValidate) {
+      // load the schema
+      try {
+        let schemaBlob = this.blobService.getBlob(this.name, this._getSchemaName(schemaVersion));
+        let schema = schemaBlob.content;
+        // cache the ajv validate function
+        this._validateFunctionMap[schemaVersion] = this.validator.compile(schema);
+        ajvValidate = this._validateFunctionMap[schemaVersion];
+      } catch (error) {
+        rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
+      }
+    }
+    return ajvValidate(content);
+  }
+
+  async init() {
+    // ensure the existence of the data container
+    await this.ensureContainer();
+    /*
+     * - if the JSON schema was previously saved, check the integrity against the one defined at construct time
+     * - save the schema
+     */
+    // TODO : nu prea e intuitiv numele, poate ar merge sparta metoda
+    await this._saveSchema();
   }
 
   /**
@@ -415,7 +492,7 @@ class DataContainer {
 
 async function DataContainerFactory(options) {
   let dataContainer = new DataContainer(options);
-  await dataContainer.ensureContainer();
+  await dataContainer.init();
   return dataContainer;
 }
 
