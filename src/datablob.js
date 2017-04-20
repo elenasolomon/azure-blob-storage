@@ -52,7 +52,7 @@ class DataBlob {
       let error = new SchemaValidationError(`Failed to validate the blob content against schema with id: 
                                             ${this.container.schema.id}`);
       error.content = content;
-      error.validationErrors = this.container.validate.errors;
+      error.validationErrors = this.container.validate.errors; //TODO nu mai am access la error
       throw error;
     }
   }

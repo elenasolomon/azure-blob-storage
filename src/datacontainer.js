@@ -148,10 +148,24 @@ class DataContainer {
     return `.schema.v${schemaVersion}`;
   }
 
+  async _saveSchema() {
+    try {
+      let schemaName = this._getSchemaName(this.schemaVersion);
+      await this.blobService.putBlob(this.name, schemaName, {type: 'BlockBlob'}, JSON.stringify(this.schema));
+    } catch (error) {
+      // daca nu are suficiente drepturi, se va arunca o eroare de tipul AuthorizationPermissionMismatch
+      rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
+    }
+  }
+
   /*
    *  Integrity check and saves the schema in blob
    */
-  async _saveSchema() {
+  /*
+   * - if the JSON schema was previously saved, check the integrity against the one defined at construct time
+   * - save the schema
+   */
+  async _cacheSchema() {
     let storedSchema;
     let schemaName = this._getSchemaName(this.schemaVersion);
     try {
@@ -159,7 +173,7 @@ class DataContainer {
       storedSchema = schemaBlob.content;
     } catch (error) {
       if (error.code === 'BlobNotFound') {
-        await this.blobService.putBlob(this.name, schemaName, {type: 'BlockBlob'}, JSON.stringify(this.schema));
+        this._saveSchema();
         this._validateFunctionMap[this.schemaVersion] = this.validator.compile(this.schema);
         return;
       }
@@ -200,12 +214,9 @@ class DataContainer {
   async init() {
     // ensure the existence of the data container
     await this.ensureContainer();
-    /*
-     * - if the JSON schema was previously saved, check the integrity against the one defined at construct time
-     * - save the schema
-     */
-    // TODO : nu prea e intuitiv numele, poate ar merge sparta metoda
-    await this._saveSchema();
+
+    // cache the JSON schema
+    await this._cacheSchema();
   }
 
   /**
@@ -277,7 +288,7 @@ class DataContainer {
           contentDisposition: blob.contentDisposition,
           cacheControl: blob.cacheControl,
         };
-        if (blob.type === 'BlockBlob') {
+        if (blob.type === 'BlockBlob' && !/.schema.v*/i.test(blob.name)) {
           return new DataBlockBlob(options);
         } else if (blob.type === 'AppendBlob') {
           return new AppendDataBlob(options);
@@ -336,8 +347,12 @@ class DataContainer {
                 contentDisposition: blob.contentDisposition,
                 cacheControl: blob.cacheControl,
               });
-              // 2. execute the handler function
-              await handler(dataBlob);
+              // we need to take extra care for the blobs that contain the schema information.
+              // the blobs can't appear in the list
+              if (!/.schema.v*/i.test(dataBlob.name)) {
+                // 2. execute the handler function
+                await handler(dataBlob);
+              }
             }
           }));
 
