@@ -119,6 +119,7 @@ describe('Data Container - Tests for authentication with SAS from auth.taskclust
   after(async () => {
     await server.terminate();
     testing.fakeauth.stop();
+    // delete the container created
   });
 
   it('should create an instance of data container', async () => {
@@ -168,7 +169,7 @@ describe('Data Container - Tests for authentication with SAS from auth.taskclust
       value: 50,
     });
 
-    // nu se mai face call la auth pentru s-a facut deja atunci cand s-a cache-uit schema
+    // the auth won't be called because it was already called in order to cache the schema
     assume(callCount).equals(0);
   });
 
@@ -192,44 +193,12 @@ describe('Data Container - Tests for authentication with SAS from auth.taskclust
         value: 50,
       });
 
-      assume(callCount).equals(2, 'azureBlobSAS should have been called once.');
+      assume(callCount).equals(2, 'azureBlobSAS should have been called twice.');
 
       await testing.sleep(200);
       let content = await blob.load();
 
-      assume(callCount).equals(3, 'azureBlobSAS should have been called twice.');
-    } catch (error) {
-      assume(false).is.true('Expected no error.');
-    }
-  });
-
-  it('create two data block blobs in parallel, only gets SAS once', async () => {
-    try {
-      dataContainer = await DataContainer({
-        account: credentials.accountName,
-        container: containerName,
-        credentials: {
-          clientId: 'authed-client',
-          accessToken: 'test-token',
-        },
-        authBaseUrl: 'http://localhost:1208',
-        schema: schema,
-      });
-      callCount = 0;
-      await Promise.all([
-        dataContainer.createDataBlockBlob({
-          name: 'blobTest2',
-        }, {
-          value: 50,
-        }),
-        dataContainer.createDataBlockBlob({
-          name: 'blobTest3',
-        }, {
-          value: 50,
-        }),
-      ]);
-
-      assume(callCount).equals(1);
+      assume(callCount).equals(3, 'azureBlobSAS should have been called three times.');
     } catch (error) {
       assume(false).is.true('Expected no error.');
     }

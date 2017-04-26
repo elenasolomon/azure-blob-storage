@@ -12,8 +12,6 @@ import {SchemaIntegrityCheckError} from './customerrors';
 /**
  * This class represents an Azure Blob Storage container which stores objects in JSON format.
  * All the objects will be validated against the schema that is provided at the creation time of the container.
- *
- * TODO - document how to create an instance of DataContainer!!
  */
 class DataContainer {
 
@@ -129,9 +127,6 @@ class DataContainer {
       verbose: true,
       allErrors: true,
     });
-    // get the schema validation function
-    // the compile method also checks if the JSON schema is a valid one
-    // this.validate = this.validator.compile(this.schema);
 
     this.updateRetries = options.updateRetries || 10;
     this.updateDelayFactor = options.updateDelayFactor || 100;
@@ -139,31 +134,49 @@ class DataContainer {
     this.updateMaxDelay = options.updateMaxDelay || 30 * 1000;
   }
 
+  /**
+   * @param schemaVersion - the schema version
+   * @returns {string} - the id of the schema
+   * @private
+   */
   _getSchemaId(schemaVersion) {
     return `http://${this.blobService.options.accountId}.blob.core.windows.net/` +
       `${this.name}/.schema.v${schemaVersion}.json`;
   }
 
+  /**
+   * @param schemaVersion - the schema version
+   * @returns {string} - the name of the schema
+   * @private
+   */
   _getSchemaName(schemaVersion) {
     return `.schema.v${schemaVersion}`;
   }
 
+  /**
+   * Saves the JSON schema in a BlockBlob.
+   * This method will throw an 'AuthorizationPermissionMismatch', if the client has read-only rights
+   * for the data container.
+   *
+   * @private
+   */
   async _saveSchema() {
     try {
       let schemaName = this._getSchemaName(this.schemaVersion);
       await this.blobService.putBlob(this.name, schemaName, {type: 'BlockBlob'}, JSON.stringify(this.schema));
     } catch (error) {
-      // daca nu are suficiente drepturi, se va arunca o eroare de tipul AuthorizationPermissionMismatch
-      rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
+      // Ignore the 'AuthorizationPermissionMismatch' error that will be throw if the client has read-only rights.
+      // The save of the schema can be done only by the clients with read-write access.
+      if (error.code !== 'AuthorizationPermissionMismatch') {
+        rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
+      }
     }
   }
 
-  /*
-   *  Integrity check and saves the schema in blob
-   */
-  /*
-   * - if the JSON schema was previously saved, check the integrity against the one defined at construct time
-   * - save the schema
+  /**
+   * If the schema was previously saved, this method will make an integrity check, otherwise will save the schema in
+   * a blockBlob.
+   * @private
    */
   async _cacheSchema() {
     let storedSchema;
@@ -191,7 +204,15 @@ class DataContainer {
    * Method that validates the content
    *
    * @param content - JSON content
-   * @param schemaVersion - the schema version (optional) ??
+   * @param schemaVersion - the schema version (optional)
+   *
+   * @return {object}
+   * ```js
+   * {
+   *    valid: boolean,   // true/false if the content is valid or not
+   *    errors: [],       // if the content is invalid, errors will contain an array of validation errors
+   * }
+   * ```
    */
   async validate(content, schemaVersion = this.schemaVersion) {
     let ajvValidate = this._validateFunctionMap[schemaVersion];
@@ -199,8 +220,8 @@ class DataContainer {
     if (!ajvValidate) {
       // load the schema
       try {
-        let schemaBlob = this.blobService.getBlob(this.name, this._getSchemaName(schemaVersion));
-        let schema = schemaBlob.content;
+        let schemaBlob = await this.blobService.getBlob(this.name, this._getSchemaName(schemaVersion));
+        let schema = JSON.parse(schemaBlob.content);
         // cache the ajv validate function
         this._validateFunctionMap[schemaVersion] = this.validator.compile(schema);
         ajvValidate = this._validateFunctionMap[schemaVersion];
@@ -208,7 +229,12 @@ class DataContainer {
         rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
       }
     }
-    return ajvValidate(content);
+    let result = {
+      valid: ajvValidate(content),
+      errors: ajvValidate.errors,
+    };
+
+    return result;
   }
 
   async init() {
@@ -288,6 +314,7 @@ class DataContainer {
           contentDisposition: blob.contentDisposition,
           cacheControl: blob.cacheControl,
         };
+        // the list can't contain the blobs that store the JSON schema
         if (blob.type === 'BlockBlob' && !/.schema.v*/i.test(blob.name)) {
           return new DataBlockBlob(options);
         } else if (blob.type === 'AppendBlob') {
@@ -348,7 +375,7 @@ class DataContainer {
                 cacheControl: blob.cacheControl,
               });
               // we need to take extra care for the blobs that contain the schema information.
-              // the blobs can't appear in the list
+              // the handle can't be applied on blobs that store the JSON schema
               if (!/.schema.v*/i.test(dataBlob.name)) {
                 // 2. execute the handler function
                 await handler(dataBlob);
@@ -412,7 +439,7 @@ class DataContainer {
    *    contentDisposition: '...',  // The content disposition of the blob
    * }
    * ```
-   * @param content - the content, in JSON format, that should be appended
+   * @param content - the content, in JSON format, that should be appended(optional)
    */
   async createAppendDataBlob(options, content) {
     options = options || {};

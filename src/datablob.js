@@ -45,14 +45,14 @@ class DataBlob {
   }
 
   async _validateJSON(content) {
-    let valid = await this.container.validate(content);
-    if (!valid) {
+    let result = await this.container.validate(content, this.version ? this.version:this.container.schemaVersion);
+    if (!result.valid) {
       debug(`Failed to validate the blob content against schema with id: 
-          ${this.container.schema.id}, errors: ${this.container.validate.errors}`);
+          ${this.container.schema.id}, errors: ${result.errors}`);
       let error = new SchemaValidationError(`Failed to validate the blob content against schema with id: 
                                             ${this.container.schema.id}`);
       error.content = content;
-      error.validationErrors = this.container.validate.errors; //TODO nu mai am access la error
+      error.validationErrors = result.errors;
       throw error;
     }
   }
@@ -118,7 +118,7 @@ class DataBlockBlob extends DataBlob {
     try {
       return JSON.stringify({
         content: json,
-        version: 1,
+        version: this.version ? this.version : this.container.schemaVersion,
       });
     } catch (error) {
       debug(`Failed to serialize the content of the blob: ${this.name} with error: ${error}, ${error.stack}`);
@@ -145,7 +145,9 @@ class DataBlockBlob extends DataBlob {
       this.contentDisposition = blob.contentDisposition;
       this.cacheControl = blob.cacheControl;
 
-      let content = JSON.parse(blob.content).content;
+      let deserializedContent = JSON.parse(blob.content);
+      let content = deserializedContent.content;
+      this.version = deserializedContent.version;
       // Validate the JSON against the schema
       await this._validateJSON(content);
       this._cache(content);
