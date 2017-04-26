@@ -115,6 +115,8 @@ class DataContainer {
 
     this.blobService = blobService;
     this.name        = options.container;
+    // _validateFunctionMap is a mapping from schema version to validation function generated
+    // after the ajv schema compile
     this._validateFunctionMap = {};
 
     this.schema      = options.schema;
@@ -187,6 +189,7 @@ class DataContainer {
     } catch (error) {
       if (error.code === 'BlobNotFound') {
         this._saveSchema();
+
         this._validateFunctionMap[this.schemaVersion] = this.validator.compile(this.schema);
         return;
       }
