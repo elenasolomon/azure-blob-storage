@@ -3,7 +3,7 @@ import DataContainer from '../lib/datacontainer';
 import {AppendDataBlob}    from '../lib/datablob';
 import uuid          from 'uuid';
 import _debug        from 'debug';
-const debug = _debug('azure-blob-storage-test:appenddatablob');
+const debug = _debug('azure-blob-storage-test:append-data-blob');
 import {logSchema, credentials}      from './helpers';
 
 describe('Azure Blob Storage - Append Data Blob Tests', () => {

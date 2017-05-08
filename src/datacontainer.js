@@ -189,8 +189,6 @@ class DataContainer {
     } catch (error) {
       if (error.code === 'BlobNotFound') {
         this._saveSchema();
-
-        this._validateFunctionMap[this.schemaVersion] = this.validator.compile(this.schema);
         return;
       }
       rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
@@ -200,7 +198,6 @@ class DataContainer {
     if (storedSchema !== JSON.stringify(this.schema)) {
       throw new SchemaIntegrityCheckError('The stored schema is not the same with the schema defined.');
     }
-    this._validateFunctionMap[this.schemaVersion] = this.validator.compile(this.schema);
   }
 
   /**
@@ -221,17 +218,21 @@ class DataContainer {
     let ajvValidate = this._validateFunctionMap[schemaVersion];
     // if the validate function is not available, this means that the schema is not yet loaded
     if (!ajvValidate) {
-      // load the schema
-      try {
-        let schemaBlob = await this.blobService.getBlob(this.name, this._getSchemaName(schemaVersion));
-        let schema = JSON.parse(schemaBlob.content);
-        // cache the ajv validate function
-        this._validateFunctionMap[schemaVersion] = this.validator.compile(schema);
-        ajvValidate = this._validateFunctionMap[schemaVersion];
-      } catch (error) {
-        rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
+      if (schemaVersion === this.schemaVersion) {
+        this._validateFunctionMap[this.schemaVersion] = this.validator.compile(this.schema);
+      } else {
+        // load the schema
+        try {
+          let schemaBlob = await this.blobService.getBlob(this.name, this._getSchemaName(schemaVersion));
+          let schema = JSON.parse(schemaBlob.content);
+          // cache the ajv validate function
+          this._validateFunctionMap[schemaVersion] = this.validator.compile(schema);
+        } catch (error) {
+          rethrowDebug(`Failed to save the json schema '${this.schema.id}' with error: ${error}`, error);
+        }
       }
     }
+    ajvValidate = this._validateFunctionMap[schemaVersion];
     let result = {
       valid: ajvValidate(content),
       errors: ajvValidate.errors,
